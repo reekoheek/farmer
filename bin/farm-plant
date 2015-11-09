@@ -16,13 +16,13 @@ rm -rf .plant.yml
 
 cp "$FARM_CONFIG" .plant.yml
 
-echo "Building..."
+echo "Farmer => Building..."
 docker-compose -f .plant.yml build
-echo "Stopping..."
+echo "Farmer => Stopping..."
 docker-compose -f .plant.yml stop
-echo "Removing..."
+echo "Farmer => Removing..."
 docker-compose -f .plant.yml rm -fv
-echo "Upping..."
+echo "Farmer => Upping..."
 docker-compose -f .plant.yml up -d
 
 rm -rf .plant.yml
