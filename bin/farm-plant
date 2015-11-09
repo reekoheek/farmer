@@ -23,5 +23,6 @@ docker-compose -f .plant.yml stop
 echo "Removing..."
 docker-compose -f .plant.yml rm -fv
 echo "Upping..."
-docker-compose -f .plant.yml up
+docker-compose -f .plant.yml up -d
 
+rm -rf .plant.yml
