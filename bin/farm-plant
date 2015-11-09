@@ -1,0 +1,27 @@
+#!/bin/bash
+set -e
+
+FARM_DIR=$(dirname $(dirname "$(test -L "$0" && readlink "$0" || echo "$0")"))
+FARM_PROJECT=$(basename $(pwd))
+FARM_ENV=$(test -z "$ENV" && echo "development" || echo "$ENV")
+
+FARM_CONFIG="$FARM_DIR/registry/$FARM_PROJECT/$FARM_ENV.yml"
+
+if [ ! -e "$FARM_CONFIG" ]; then
+  echo File configuration not found $FARM_PROJECT/$FARM_ENV
+  exit 1
+fi
+
+rm -rf .plant.yml
+
+cp "$FARM_CONFIG" .plant.yml
+
+echo "Building..."
+docker-compose -f .plant.yml build
+echo "Stopping..."
+docker-compose -f .plant.yml stop
+echo "Removing..."
+docker-compose -f .plant.yml rm -fv
+echo "Upping..."
+docker-compose -f .plant.yml up
+
