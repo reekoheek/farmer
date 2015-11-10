@@ -1,28 +1,208 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env node
 
-FARM_DIR=$(dirname $(dirname "$(test -L "$0" && readlink "$0" || echo "$0")"))
-FARM_PROJECT=$(basename $(pwd))
-FARM_ENV=$(test -z "$ENV" && echo "development" || echo "$ENV")
+var path = require('path');
+var fs = require('fs');
+var argv = require('minimist')(process.argv);
+var co = require('co');
+var spawn = require('child_process').spawn;
 
-FARM_CONFIG="$FARM_DIR/registry/$FARM_PROJECT/$FARM_ENV.yml"
+var env;
 
-if [ ! -e "$FARM_CONFIG" ]; then
-  echo File configuration not found $FARM_PROJECT/$FARM_ENV
-  exit 1
-fi
+function printUsage() {
+  'use strict';
+  console.log('Usage: farm-plant -n <name> -s <seed> [-c]');
+  console.log('Options:');
+  console.log('  -n <name> Project name');
+  console.log('  -s <seed> Git URL as project seed');
+  console.log('  -c        Check configuration only');
+}
 
-rm -rf .plant.yml
+function assertDir(dir, as) {
+  'use strict';
 
-cp "$FARM_CONFIG" .plant.yml
+  var stat;
+  try {
+    stat = fs.statSync(dir);
+    if (!stat.isDirectory()) {
+      throw new Error('Is not dir');
+    }
+  } catch(e) {
+    throw new Error('Invalid ' + (as || 'dir') + '=' + dir);
+  }
+}
 
-echo "Farmer => Building..."
-docker-compose -f .plant.yml build
-echo "Farmer => Stopping..."
-docker-compose -f .plant.yml stop
-echo "Farmer => Removing..."
-docker-compose -f .plant.yml rm -fv
-echo "Farmer => Upping..."
-docker-compose -f .plant.yml up -d
+function assertFile(file, as) {
+  'use strict';
 
-rm -rf .plant.yml
+  var stat;
+  try {
+    stat = fs.statSync(file);
+    if (!stat.isDirectory()) {
+      throw new Error('Is not file');
+    }
+  } catch(e) {
+    throw new Error('Invalid ' + (as || 'file') + '=' + file);
+  }
+}
+
+function printEnv() {
+  'use strict';
+
+  Object.keys(env).forEach(function(key) {
+    console.log('   | %s=%s', key, env[key]);
+  });
+}
+
+function prepareEnv() {
+  'use strict';
+
+  if (!argv.n || !argv.s) {
+    printUsage();
+    process.exit(1);
+  }
+
+  var seed = argv.s.split('#');
+
+  env = {
+    FARM_HOME: path.resolve(__dirname, '..'),
+    FARM_FIELD: path.resolve('.'),
+    FARM_NAME: argv.n,
+    FARM_ENV: 'development',
+    FARM_SEED: seed[0],
+    FARM_SEED_VERSION: seed[1] || 'master',
+  };
+
+  Object.keys(process.env).forEach(function(key) {
+    if (key.indexOf('FARM_') === 0) {
+      env[key] = process.env[key];
+    }
+  });
+
+  assertDir(env.FARM_HOME, 'FARM_HOME');
+  assertDir(env.FARM_FIELD, 'FARM_FIELD');
+
+  var configFile = getConfigFile(env.FARM_NAME, env.FARM_ENV);
+  assertFile(configFile);
+
+  printEnv();
+
+  if (argv.c) {
+    process.exit();
+  }
+}
+
+function getWorkingDir(name) {
+  'use strict';
+
+  return path.join(env.FARM_FIELD, name);
+}
+
+function isExist(name) {
+  'use strict';
+  try {
+    assertDir(getWorkingDir(name));
+    return true;
+  } catch(e) {
+    return false;
+  }
+}
+
+function run(cmd, args, opts) {
+  'use strict';
+
+  return new Promise(function(resolve, reject) {
+    var s = spawn(cmd, args, opts);
+    s.stdout.on('data', function(data) {
+      data.toString().trim().split("\n").forEach(function(line) {
+        console.log('   | %s', line.trim());
+      });
+    });
+
+    s.stderr.on('data', function(data) {
+      data.toString().trim().split("\n").forEach(function(line) {
+        console.log('   | %s', line.trim());
+      });
+    });
+
+    s.on('exit', function(status) {
+      if (status === 0) {
+        resolve();
+      } else {
+        reject(new Error('Error running cmd'));
+      }
+    });
+  });
+}
+
+function isDetached(name) {
+  'use strict';
+
+  return co(function *() {
+    try {
+      yield run('git', ['symbolic-ref', '-q', 'HEAD'], {cwd: getWorkingDir(name)});
+      return false;
+    } catch(e) {
+      return true;
+    }
+  });
+}
+
+function prepare(name, seed, version) {
+  'use strict';
+
+  console.log('Preparing ...');
+  return co(function *() {
+    if (!isExist(env.FARM_NAME)) {
+      yield run('git', ['clone', seed, getWorkingDir(name)]);
+      yield run('git', ['checkout', version], {cwd: getWorkingDir(name)});
+    }
+    var detached = yield isDetached(name);
+    if (!detached) {
+      yield run('git', ['reset', '--hard'], {cwd: getWorkingDir(name)});
+      yield run('git', ['clean', '-f'], {cwd: getWorkingDir(name)});
+      yield run('git', ['fetch', '--all', '-f'], {cwd: getWorkingDir(name)});
+      yield run('git', ['pull', 'origin', version], {cwd: getWorkingDir(name)});
+    } else {
+      console.log('  *| Nothing to prepare, working from detached version');
+    }
+  });
+}
+
+function getConfigFile(name, farmEnv) {
+  'use strict';
+
+  return path.join(env.FARM_HOME, 'registry', name, farmEnv + '.yml');
+}
+
+function build(name, farmEnv) {
+  'use strict';
+
+  console.log('Building ...');
+  return co(function *() {
+    try {
+      fs.unlinkSync(path.join(getWorkingDir(name)), '.plant.yml');
+    } catch(e) {}
+
+    yield run('cp', [getConfigFile(name, farmEnv), '.plant.yml'], {cwd: getWorkingDir(name)});
+    yield run('docker-compose', ['-f', '.plant.yml', 'build'], {cwd: getWorkingDir(name)});
+    yield run('docker-compose', ['-f', '.plant.yml', 'stop'], {cwd: getWorkingDir(name)});
+    yield run('docker-compose', ['-f', '.plant.yml', 'rm', '-fv'], {cwd: getWorkingDir(name)});
+    yield run('docker-compose', ['-f', '.plant.yml', 'up', '-d'], {cwd: getWorkingDir(name)});
+  });
+}
+
+(function main() {
+  'use strict';
+
+  co(function *() {
+    try {
+      prepareEnv();
+
+      yield prepare(env.FARM_NAME, env.FARM_SEED, env.FARM_SEED_VERSION);
+      yield build(env.FARM_NAME, env.FARM_ENV);
+    } catch(e) {
+      console.error(e.message);
+      process.exit(1);
+    }
+  });
+})();
