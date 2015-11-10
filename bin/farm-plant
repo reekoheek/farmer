@@ -188,6 +188,10 @@ function build(name, farmEnv) {
     yield run('docker-compose', ['-f', '.plant.yml', 'stop'], {cwd: getWorkingDir(name)});
     yield run('docker-compose', ['-f', '.plant.yml', 'rm', '-fv'], {cwd: getWorkingDir(name)});
     yield run('docker-compose', ['-f', '.plant.yml', 'up', '-d'], {cwd: getWorkingDir(name)});
+
+    try {
+      fs.unlinkSync(path.join(getWorkingDir(name)), '.plant.yml');
+    } catch(e) {}
   });
 }
 
