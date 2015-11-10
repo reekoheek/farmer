@@ -37,7 +37,7 @@ function assertFile(file, as) {
   var stat;
   try {
     stat = fs.statSync(file);
-    if (!stat.isDirectory()) {
+    if (!stat.isFile()) {
       throw new Error('Is not file');
     }
   } catch(e) {
